@@ -210,3 +210,10 @@ The project **can be cross-built from Linux** immediately using `cargo build --t
 - The proposed `realtime_threads` diff above puts `#[cfg]` on a block tail expression, which rustc rejects. Write two separate `fn realtime_threads` items (one per cfg) instead.
 - The proposed `priority.rs` Windows branch uses `windows_sys`; that crate is not in Cargo.toml and would have to be added as a Windows-only dependency.
 - `cargo check` for both Windows targets was reported clean by the agent but I did not re-run it myself.
+
+## Status after installing mingw-w64-gcc (owner note)
+
+- `CARGO_TARGET_DIR=/tmp/rhythm-win-target cargo build --release --target x86_64-pc-windows-gnu` builds a 8.7 MB rhythm.exe (PE32+ x86-64) in about 35 s. No linker config needed: rustc finds x86_64-w64-mingw32-gcc by itself. Tests (69) and clippy pass on Linux; clippy for the Windows target also reports nothing in src/ or the Windows backend.
+- Fixed in vendor/miniquad/src/native/windows.rs: the frame delay is now honoured (same sleep at the top of the loop as the X11 backend), and a dropped file is no longer read into memory with unwrap (a folder panicked, a big song wasted memory).
+- Zip for sharing: `dist/rhythia-is-trash-windows-x64.zip` (about 3 MB, ignored by git). Never run on real Windows or Wine (neither is installed here): audio buffers, high-DPI, drag and drop and sleep accuracy are unverified. Telemetry from /proc is zero on Windows (only the benchmark mode uses it).
+- Still open: WASAPI may refuse the 256-frame audio buffer (kira falls back, latency would be higher), and Windows has no equivalent of the compositor bypass hint.

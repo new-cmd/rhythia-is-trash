@@ -755,7 +755,7 @@ unsafe extern "system" fn win32_wndproc(
                         let path = path.assume_init();
                         PathBuf::from(OsString::from_wide(&path[0..path_len]))
                     };
-                    d.dropped_files.bytes.push(std::fs::read(&path).unwrap());
+                    d.dropped_files.bytes.push(Vec::new());
                     d.dropped_files.paths.push(path);
                 }
             }
@@ -1246,6 +1246,10 @@ where
 
         let mut done = false;
         while !(done || crate::native_display().lock().unwrap().quit_ordered) {
+            let delay = crate::FRAME_DELAY_US.load(std::sync::atomic::Ordering::Relaxed);
+            if delay > 0 {
+                std::thread::sleep(std::time::Duration::from_micros(u64::from(delay)));
+            }
             while let Ok(request) = rx.try_recv() {
                 display.process_request(request);
             }
