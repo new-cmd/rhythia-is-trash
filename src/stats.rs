@@ -73,7 +73,7 @@ impl Replay {
         let Some(&(first_t, first_pos)) = self.samples.first() else {
             return Vec2::ZERO;
         };
-        if t <= f64::from(first_t) {
+        if !t.is_finite() || t <= f64::from(first_t) {
             return first_pos;
         }
         let &(last_t, last_pos) = self.samples.last().expect("nonempty replay");
@@ -98,6 +98,15 @@ impl Replay {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sampling_at_a_non_finite_time_is_safe() {
+        let mut r = Replay::new();
+        r.record(1.0, vec2(0.0, 0.0));
+        r.record(2.0, vec2(1.0, 1.0));
+        assert_eq!(r.sample_at(f64::NAN), vec2(0.0, 0.0));
+        assert_eq!(r.sample_at(f64::INFINITY), vec2(0.0, 0.0));
+    }
+
     use super::*;
     use macroquad::prelude::vec2;
 

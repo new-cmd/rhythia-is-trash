@@ -649,6 +649,7 @@ pub struct SettingsScreen {
     entered: f64,
     last_mouse: Vec2,
     dragging: bool,
+    drag_field: Option<Field>,
     held: f32,
     snapshot: Option<Settings>,
 }
@@ -662,6 +663,7 @@ impl SettingsScreen {
             entered: get_time(),
             last_mouse: Vec2::from(mouse_position()),
             dragging: false,
+            drag_field: None,
             held: 0.0,
             snapshot: None,
         }
@@ -748,6 +750,7 @@ impl SettingsScreen {
                         s.nudge(row_of(f), 1.0, 1.0);
                     } else if mouse.x >= lay.track0 - 12.0 && mouse.x <= lay.track1 + 12.0 {
                         self.dragging = true;
+                        self.drag_field = Some(f);
                     }
                 }
             }
@@ -757,7 +760,7 @@ impl SettingsScreen {
         }
         let entry = list[self.selected];
         if self.dragging
-            && let Entry::Field(f) = entry
+            && let Some(f) = self.drag_field
         {
             let r = row_of(f);
             let t = ((mouse.x - lay.track0) / (lay.track1 - lay.track0)).clamp(0.0, 1.0);

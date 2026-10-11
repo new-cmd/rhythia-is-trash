@@ -42,6 +42,8 @@ use crate::{
 
 const MAPS_DIR: &str = "maps";
 const ROW_H: f32 = 44.0;
+/// Menus sleep this long before reading input, which drops them from the full refresh rate to about half of it (72 fps on a 144 Hz screen). Songs and calibration never use it.
+const MENU_FRAME_DELAY: f64 = 0.0115;
 
 type Stamp = Option<std::time::SystemTime>;
 type MetaCache = HashMap<PathBuf, (Stamp, Option<Meta>)>;
@@ -714,7 +716,12 @@ async fn main() {
             frame_ms,
             perf.stats().p50_ms,
         );
-        macroquad::miniquad::window::set_frame_delay(f64::from(pacer.delay_ms()) / 1000.0);
+        let delay = if game.is_none() && calibration.is_none() {
+            MENU_FRAME_DELAY
+        } else {
+            f64::from(pacer.delay_ms()) / 1000.0
+        };
+        macroquad::miniquad::window::set_frame_delay(delay);
         if is_key_pressed(KeyCode::F3) {
             settings.space = settings.space.next();
         }

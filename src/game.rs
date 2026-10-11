@@ -174,6 +174,7 @@ pub struct Game {
     pub run: Run,
     pub watching: Option<crate::stats::Replay>,
     saved: Option<Run>,
+    saved_new_best: bool,
     pub sensitivity: f32,
     pub offset: f64,
     pub key: String,
@@ -288,6 +289,7 @@ impl Game {
             run,
             watching: None,
             saved: None,
+            saved_new_best: false,
             sensitivity: settings.sensitivity,
             offset: f64::from(settings.offset_ms) / 1000.0,
             key: String::new(),
@@ -318,6 +320,7 @@ impl Game {
         let replay = self.run.replay.clone();
         let started_at = self.run.started_at;
         self.saved = Some(self.run.clone());
+        self.saved_new_best = self.new_best;
         self.watching = Some(replay);
         self.start_at(started_at, false);
         self.recorded = true;
@@ -329,6 +332,7 @@ impl Game {
             if let Some(saved) = self.saved.take() {
                 self.run = saved;
             }
+            self.new_best = std::mem::take(&mut self.saved_new_best);
             self.phase = Phase::Finished;
             self.phase_since = get_time();
             self.music.set_paused(true);
@@ -375,9 +379,11 @@ impl Game {
             self.music.update(dt);
             self.aim();
             self.judge();
-            self.animate_hud(dt as f32);
-            if self.run.first == self.run.states.len() && self.now() > self.end_time() {
-                self.finish();
+            if self.phase == Phase::Playing {
+                self.animate_hud(dt as f32);
+                if self.run.first == self.run.states.len() && self.now() > self.end_time() {
+                    self.finish();
+                }
             }
         }
         let now = self.now();
@@ -532,6 +538,7 @@ impl Game {
     }
 
     fn judge(&mut self) {
+        let replaying = self.watching.is_some();
         let now = self.now();
         for i in self.run.first..self.run.states.len() {
             if self.run.states[i] != NoteState::Pending {
@@ -554,7 +561,7 @@ impl Game {
                 Verdict::Miss => self.miss(i),
                 Verdict::Pending => {}
             }
-            if self.run.failed {
+            if self.run.failed || (replaying && self.watching.is_none()) {
                 return;
             }
         }
