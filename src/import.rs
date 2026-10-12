@@ -56,6 +56,7 @@ pub fn import(dir: &Path, paths: &[PathBuf]) -> Report {
 
 const MAX_ENTRY: u64 = 1 << 30;
 const MAX_ENTRIES: usize = 4000;
+const MAX_TOTAL: u64 = 2 << 30;
 
 struct Unpacked(PathBuf);
 
@@ -131,14 +132,20 @@ fn unzip(path: &Path, unpacked: &Unpacked, out: &mut Vec<PathBuf>) -> Result<(),
     let stem = path
         .file_stem()
         .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-    let folder = unpacked
-        .0
-        .join(if stem.is_empty() { "pack".into() } else { stem });
-    let mut found = 0;
+    let stem = if stem.chars().all(|c| c == '.') {
+        "pack".to_string()
+    } else {
+        stem
+    };
+    let folder = unpacked.0.join(stem);
+    let (mut found, mut total) = (0, 0_u64);
     for i in 0..zip.len().min(MAX_ENTRIES) {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
         if entry.is_dir() || entry.size() > MAX_ENTRY {
             continue;
+        }
+        if total + entry.size() > MAX_TOTAL {
+            break;
         }
         let Some(name) = entry
             .enclosed_name()
@@ -160,7 +167,10 @@ fn unzip(path: &Path, unpacked: &Unpacked, out: &mut Vec<PathBuf>) -> Result<(),
         if bytes.len() as u64 > MAX_ENTRY {
             continue;
         }
-        fs::write(&target, bytes).map_err(|e| e.to_string())?;
+        total += bytes.len() as u64;
+        if fs::write(&target, bytes).is_err() {
+            continue;
+        }
         out.push(target);
         found += 1;
     }
@@ -261,8 +271,10 @@ fn copy_dir(dir: &Path, src: &Path, name: &std::ffi::OsStr) -> io::Result<PathBu
         Ok(())
     }
     let same = |a: &Path, b: &Path| {
-        let len = |p: &Path| fs::metadata(p.join("objects.phxmo")).map(|m| m.len()).ok();
-        len(a).is_some() && len(a) == len(b)
+        a.join("objects.phxmo").is_file()
+            && ["objects.phxmo", "metadata.json"]
+                .iter()
+                .all(|f| same_content(&a.join(f), &b.join(f)).unwrap_or(false))
     };
     let existing = dir.join(name);
     if existing.is_dir() && same(src, &existing) {
@@ -316,13 +328,33 @@ pub fn remove(dir: &Path, path: &Path) -> Result<Removed, String> {
 
 pub fn restore(removed: &Removed) -> Result<PathBuf, String> {
     let mut done: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let with_suffix = |from: &Path, n: u32| {
+        let stem = from
+            .file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        let ext = from
+            .extension()
+            .map_or_else(String::new, |e| format!(".{}", e.to_string_lossy()));
+        from.with_file_name(format!("{stem} ({n}){ext}"))
+    };
+    // One suffix for the whole group, so a map and its song keep the same name.
+    let suffix = removed
+        .moved
+        .iter()
+        .any(|(from, _)| from.exists())
+        .then(|| {
+            (2..).find(|n| {
+                removed
+                    .moved
+                    .iter()
+                    .all(|(from, _)| !with_suffix(from, *n).exists())
+            })
+        })
+        .flatten();
     for (from, trashed) in &removed.moved {
-        let dir = from.parent().unwrap_or(Path::new("."));
-        let name = from.file_name().unwrap_or_default();
-        let dest = if from.exists() {
-            unique(dir, name)
-        } else {
-            from.clone()
+        let dest = match suffix {
+            Some(n) => with_suffix(from, n),
+            None => from.clone(),
         };
         if let Err(e) = fs::rename(trashed, &dest) {
             for (placed, was) in done.iter().rev() {
@@ -388,6 +420,74 @@ mod tests {
                 .unwrap()
                 .contains("no maps or songs")
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn restore_keeps_a_map_and_its_song_under_one_name_when_only_one_collides() {
+        let root = scratch("group");
+        let maps = root.join("maps");
+        fs::create_dir_all(&maps).unwrap();
+        fs::write(maps.join("b.txt"), "x,1|1|500").unwrap();
+        fs::write(maps.join("b.ogg"), b"audio").unwrap();
+        let gone = remove(&maps, &maps.join("b.txt")).unwrap();
+        fs::write(maps.join("b.txt"), "x,1|1|600").unwrap();
+        let back = restore(&gone).unwrap();
+        assert_eq!(back, maps.join("b (2).txt"));
+        assert!(maps.join("b (2).ogg").is_file());
+        assert!(!maps.join("b.ogg").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_zip_named_with_only_dots_still_unpacks_into_its_own_folder() {
+        use std::io::Write;
+
+        let root = scratch("dotzip");
+        let maps = root.join("maps");
+        let archive = root.join("...zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+        zip.start_file("a.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"x,1|1|500,0|2|900").unwrap();
+        zip.finish().unwrap();
+        let report = import(&maps, &[archive]);
+        assert_eq!(report.errors, Vec::<String>::new());
+        assert_eq!(map::scan(&maps), vec![maps.join("a.txt")]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_different_map_folder_with_the_same_name_and_size_is_kept_separately() {
+        let root = scratch("samesize");
+        let (src, maps) = (root.join("src"), root.join("maps"));
+        for (dir, meta) in [("one", "{\"Title\":\"A\"}"), ("two", "{\"Title\":\"B\"}")] {
+            let d = src.join(dir).join("pack.phxm");
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("metadata.json"), meta).unwrap();
+            fs::write(d.join("objects.phxmo"), [0_u8; 8]).unwrap();
+        }
+        let first = copy_dir(
+            &maps,
+            &src.join("one/pack.phxm"),
+            std::ffi::OsStr::new("pack.phxm"),
+        );
+        fs::create_dir_all(&maps).ok();
+        let first = first.or_else(|_| {
+            copy_dir(
+                &maps,
+                &src.join("one/pack.phxm"),
+                std::ffi::OsStr::new("pack.phxm"),
+            )
+        });
+        assert!(first.is_ok());
+        let second = copy_dir(
+            &maps,
+            &src.join("two/pack.phxm"),
+            std::ffi::OsStr::new("pack.phxm"),
+        )
+        .unwrap();
+        assert_ne!(second, maps.join("pack.phxm"));
         fs::remove_dir_all(&root).unwrap();
     }
 

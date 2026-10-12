@@ -200,7 +200,13 @@ impl Importer {
         let (finished, done) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             for paths in queue {
-                let report = import::import(Path::new(MAPS_DIR), &paths);
+                let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    import::import(Path::new(MAPS_DIR), &paths)
+                }))
+                .unwrap_or_else(|_| import::Report {
+                    errors: vec!["import failed unexpectedly, the file may be damaged".into()],
+                    ..Default::default()
+                });
                 if finished.send(report).is_err() {
                     break;
                 }
@@ -325,16 +331,18 @@ impl Select {
         }) {
             self.selected = i;
         }
+        self.selected = self.selected.min(self.entries.len() - 1);
     }
 
     fn apply(&mut self, report: &import::Report) {
         self.rescan(report.added.last().map(PathBuf::as_path));
-        self.error = report.error();
-        self.notice = if self.error.is_none() {
-            report.notice()
-        } else {
-            None
-        };
+        if let Some(error) = report.error() {
+            self.error = Some(error);
+            self.notice = None;
+        } else if let Some(notice) = report.notice() {
+            self.error = None;
+            self.notice = Some(notice);
+        }
     }
 
     fn remove_selected(&mut self) {

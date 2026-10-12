@@ -72,6 +72,40 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     ))
 }
 
+/// Reads a JPEG's size from its frame header before decoding, so a tiny file that claims
+/// a huge picture cannot make the decoder allocate gigabytes.
+fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(..2)? != [0xff, 0xd8] {
+        return None;
+    }
+    let mut at = 2;
+    loop {
+        while *bytes.get(at)? != 0xff {
+            at += 1;
+        }
+        while *bytes.get(at)? == 0xff {
+            at += 1;
+        }
+        let marker = *bytes.get(at)?;
+        at += 1;
+        match marker {
+            0x01 | 0xd0..=0xd8 => continue,
+            0xd9 | 0xda => return None,
+            _ => {}
+        }
+        let len = usize::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]));
+        if (0xc0..=0xcf).contains(&marker) && ![0xc4, 0xc8, 0xcc].contains(&marker) {
+            let height = u16::from_be_bytes([*bytes.get(at + 3)?, *bytes.get(at + 4)?]);
+            let width = u16::from_be_bytes([*bytes.get(at + 5)?, *bytes.get(at + 6)?]);
+            return Some((u32::from(width), u32::from(height)));
+        }
+        if len < 2 {
+            return None;
+        }
+        at += len;
+    }
+}
+
 fn downscale(image: &mut Image) {
     let width = u32::from(image.width);
     let height = u32::from(image.height);
@@ -224,7 +258,7 @@ impl Wallpaper {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err("Wallpaper file exceeds the 64 MB limit".to_owned());
         }
-        if let Some((width, height)) = png_dimensions(&bytes) {
+        if let Some((width, height)) = png_dimensions(&bytes).or_else(|| jpeg_dimensions(&bytes)) {
             check_dimensions(width, height)?;
         }
         let mut image = Image::from_file_with_format(&bytes, None)
@@ -391,6 +425,36 @@ mod tests {
         png[16..20].copy_from_slice(&8193u32.to_be_bytes());
         png[20..24].copy_from_slice(&1u32.to_be_bytes());
         std::fs::write(&huge, png).unwrap();
+        let err = Wallpaper::load(&huge).err().unwrap();
+        assert!(err.contains("8192 px"), "{err}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn jpeg_header(width: u16, height: u16) -> Vec<u8> {
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46];
+        jpeg.extend([0xff, 0xff, 0xc0, 0x00, 0x11, 0x08]);
+        jpeg.extend(height.to_be_bytes());
+        jpeg.extend(width.to_be_bytes());
+        jpeg.extend([0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+        jpeg
+    }
+
+    #[test]
+    fn jpeg_size_is_read_from_the_header_and_oversized_ones_are_refused() {
+        assert_eq!(
+            jpeg_dimensions(&jpeg_header(1920, 1080)),
+            Some((1920, 1080))
+        );
+        assert_eq!(
+            jpeg_dimensions(&jpeg_header(65535, 65535)),
+            Some((65535, 65535))
+        );
+        assert_eq!(jpeg_dimensions(&jpeg_header(10, 10)[..12]), None);
+        assert_eq!(jpeg_dimensions(b"not a jpeg"), None);
+        assert_eq!(jpeg_dimensions(&[]), None);
+        let dir = temp_dir();
+        let huge = dir.join("huge.jpg");
+        std::fs::write(&huge, jpeg_header(65535, 65535)).unwrap();
         let err = Wallpaper::load(&huge).err().unwrap();
         assert!(err.contains("8192 px"), "{err}");
         std::fs::remove_dir_all(dir).unwrap();
