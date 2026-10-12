@@ -160,6 +160,7 @@ fn clock(seconds: f64) -> String {
 }
 
 fn window_conf() -> Conf {
+    store::use_data_dir();
     let saved = Settings::load();
     if saved.short_gl_queue {
         // SAFETY: runs before the window thread or audio threads exist.
