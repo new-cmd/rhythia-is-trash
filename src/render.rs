@@ -609,6 +609,7 @@ impl Game {
             self.space,
             self.settings.approach_rate,
         );
+        self.draw_beat(skin, now);
         self.draw_hud_3d(skin);
         self.draw_grid(skin);
         self.draw_notes(skin, now);
@@ -891,11 +892,55 @@ impl Game {
         }
     }
 
+    fn draw_beat(&self, skin: &Skin, now: f64) {
+        if !self.settings.beat_glow || crate::look::active().calm || self.phase != Phase::Playing {
+            return;
+        }
+        let notes = &self.map.notes;
+        let due = notes.partition_point(|n| n.time <= now);
+        let Some(last) = due.checked_sub(1).map(|i| notes[i]) else {
+            return;
+        };
+        let kick = (-(now - last.time) as f32 * 7.0).exp();
+        let t = now as f32;
+        let hue = note_hue(due) + t * 0.02;
+        gl_use_material(&skin.additive);
+        let mut b = Batch::new(&skin.halo);
+        sprite(
+            &mut b,
+            vec3(0.0, 0.0, -38.0),
+            Vec2::splat(80.0 + 10.0 * kick),
+            0.0,
+            fade(prism(hue), 0.05 + 0.07 * kick),
+        );
+        sprite(
+            &mut b,
+            vec3((t * 0.25).sin() * 14.0, (t * 0.18).cos() * 7.0, -42.0),
+            Vec2::splat(56.0),
+            0.0,
+            fade(prism(hue + 0.33), 0.05 + 0.03 * kick),
+        );
+        drop(b);
+        gl_use_material(&skin.blend);
+    }
+
     fn draw_effects(&self, skin: &Skin, now: f64) {
         if crate::look::active().calm {
             return;
         }
         gl_use_material(&skin.additive);
+        let pulse = self.run.hud.mult_pulse;
+        if self.settings.level_pulse && pulse > 0.0 {
+            let mut ring = Batch::new(&skin.wave);
+            let color = lerp_color(self.note_color(self.run.last_hit.unwrap_or(0)), WHITE, 0.4);
+            sprite(
+                &mut ring,
+                vec3(0.0, 0.0, -0.05),
+                Vec2::splat(2.5 + (1.0 - pulse) * 5.0),
+                0.0,
+                fade(color, 0.22 * pulse * pulse),
+            );
+        }
         let mut halos = Batch::new(&skin.halo);
         for e in &self.run.effects {
             let age = ((now - e.born) / BREAK_LIFE).clamp(0.0, 1.0) as f32;

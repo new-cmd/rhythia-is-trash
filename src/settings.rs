@@ -38,6 +38,8 @@ enum Field {
     NoFail,
     Bypass,
     NoteCore,
+    LevelPulse,
+    BeatGlow,
 }
 
 struct Row {
@@ -67,7 +69,7 @@ const fn row(
     }
 }
 
-const ROWS: [Row; 23] = [
+const ROWS: [Row; 25] = [
     row(
         "look",
         "Look",
@@ -182,6 +184,22 @@ const ROWS: [Row; 23] = [
     row("no_fail", "No fail", Field::NoFail, 0.0, 1.0, 1.0),
     row("note_core", "Note style", Field::NoteCore, 0.0, 1.0, 1.0),
     row(
+        "level_pulse",
+        "Level-up pulse",
+        Field::LevelPulse,
+        0.0,
+        1.0,
+        1.0,
+    ),
+    row(
+        "beat_glow",
+        "Beat background",
+        Field::BeatGlow,
+        0.0,
+        1.0,
+        1.0,
+    ),
+    row(
         "bypass_compositor",
         "Skip desktop compositor while playing",
         Field::Bypass,
@@ -218,6 +236,8 @@ pub struct Settings {
     pub short_gl_queue: bool,
     pub no_fail: bool,
     pub note_core: bool,
+    pub level_pulse: bool,
+    pub beat_glow: bool,
     pub bypass_compositor: bool,
     pub look: usize,
     pub wallpaper: String,
@@ -246,6 +266,8 @@ impl Default for Settings {
             short_gl_queue: false,
             no_fail: false,
             note_core: false,
+            level_pulse: true,
+            beat_glow: false,
             bypass_compositor: true,
             look: 0,
             wallpaper: String::new(),
@@ -280,6 +302,8 @@ impl Settings {
                 Field::ShortQueue => s.short_gl_queue = v.as_bool().unwrap_or(s.short_gl_queue),
                 Field::NoFail => s.no_fail = v.as_bool().unwrap_or(s.no_fail),
                 Field::NoteCore => s.note_core = v.as_bool().unwrap_or(s.note_core),
+                Field::LevelPulse => s.level_pulse = v.as_bool().unwrap_or(s.level_pulse),
+                Field::BeatGlow => s.beat_glow = v.as_bool().unwrap_or(s.beat_glow),
                 Field::Bypass => s.bypass_compositor = v.as_bool().unwrap_or(s.bypass_compositor),
                 Field::Space => {
                     if let Some(found) = v
@@ -328,6 +352,8 @@ impl Settings {
                 Field::ShortQueue => Value::Bool(self.short_gl_queue),
                 Field::NoFail => Value::Bool(self.no_fail),
                 Field::NoteCore => Value::Bool(self.note_core),
+                Field::LevelPulse => Value::Bool(self.level_pulse),
+                Field::BeatGlow => Value::Bool(self.beat_glow),
                 Field::Bypass => Value::Bool(self.bypass_compositor),
                 Field::Space => Value::String(self.space.name().into()),
                 f => Value::from((f64::from(self.get(f)) * 1000.0).round() / 1000.0),
@@ -400,6 +426,8 @@ impl Settings {
             Field::ShortQueue => f32::from(u8::from(self.short_gl_queue)),
             Field::NoFail => f32::from(u8::from(self.no_fail)),
             Field::NoteCore => f32::from(u8::from(self.note_core)),
+            Field::LevelPulse => f32::from(u8::from(self.level_pulse)),
+            Field::BeatGlow => f32::from(u8::from(self.beat_glow)),
             Field::Bypass => f32::from(u8::from(self.bypass_compositor)),
             Field::WallpaperDim => self.wallpaper_dim,
             Field::Look => self.look as f32,
@@ -433,6 +461,8 @@ impl Settings {
             Field::ShortQueue => self.short_gl_queue = v >= 0.5,
             Field::NoFail => self.no_fail = v >= 0.5,
             Field::NoteCore => self.note_core = v >= 0.5,
+            Field::LevelPulse => self.level_pulse = v >= 0.5,
+            Field::BeatGlow => self.beat_glow = v >= 0.5,
             Field::Bypass => self.bypass_compositor = v >= 0.5,
             Field::Space => self.space = Space::ALL[v.round() as usize],
             Field::Look => {
@@ -453,6 +483,8 @@ impl Settings {
             Field::ShortQueue => self.short_gl_queue = !self.short_gl_queue,
             Field::NoFail => self.no_fail = !self.no_fail,
             Field::NoteCore => self.note_core = !self.note_core,
+            Field::LevelPulse => self.level_pulse = !self.level_pulse,
+            Field::BeatGlow => self.beat_glow = !self.beat_glow,
             Field::Bypass => self.bypass_compositor = !self.bypass_compositor,
             Field::Look => {
                 self.look = (self.look as i32 + dir as i32)
@@ -496,6 +528,8 @@ impl Settings {
             Field::ShortQueue => (if self.short_gl_queue { "on" } else { "off" }).to_string(),
             Field::NoFail => (if self.no_fail { "on" } else { "off" }).to_string(),
             Field::NoteCore => (if self.note_core { "filled" } else { "outline" }).to_string(),
+            Field::LevelPulse => (if self.level_pulse { "on" } else { "off" }).to_string(),
+            Field::BeatGlow => (if self.beat_glow { "on" } else { "off" }).to_string(),
             Field::Bypass => (if self.bypass_compositor { "on" } else { "off" }).to_string(),
             Field::AudioBuffer if self.audio_buffer < 1.0 => "auto".to_string(),
             Field::AudioBuffer => format!(
@@ -531,6 +565,8 @@ fn is_choice(field: Field) -> bool {
             | Field::ShortQueue
             | Field::NoFail
             | Field::NoteCore
+            | Field::LevelPulse
+            | Field::BeatGlow
             | Field::Bypass
     )
 }
@@ -552,7 +588,7 @@ const TABS: [TabRows; 4] = [
             Field::Trail,
             Field::NoteCore,
         ],
-        more: &[Field::Glow],
+        more: &[Field::Glow, Field::LevelPulse, Field::BeatGlow],
     },
     TabRows {
         main: &[
