@@ -217,3 +217,7 @@ The project **can be cross-built from Linux** immediately using `cargo build --t
 - Fixed in vendor/miniquad/src/native/windows.rs: the frame delay is now honoured (same sleep at the top of the loop as the X11 backend), and a dropped file is no longer read into memory with unwrap (a folder panicked, a big song wasted memory).
 - Zip for sharing: `dist/rhythia-is-trash-windows-x64.zip` (about 3 MB, ignored by git). Never run on real Windows or Wine (neither is installed here): audio buffers, high-DPI, drag and drop and sleep accuracy are unverified. Telemetry from /proc is zero on Windows (only the benchmark mode uses it).
 - Still open: WASAPI may refuse the 256-frame audio buffer (kira falls back, latency would be higher), and Windows has no equivalent of the compositor bypass hint.
+
+## Drag and drop on Windows (found by a Windows tester)
+
+A friend running build 1 reported that dragging any file onto the window did nothing. Cause: vendor/miniquad/src/native/windows.rs WM_DROPFILES filled the dropped-file list but never called event_handler.files_dropped_event(), unlike the X11 backend, so macroquad's get_dropped_files() stayed empty. My first Windows fix removed the read of the file bytes but missed this. Build 2 (dist/rhythia-is-trash-windows-x64-v2.zip) calls the event after the loop, releases the drop handle with DragFinish, and queries each path length first so long paths work. Compile checked for x86_64-pc-windows-gnu (clippy clean); not run on Windows or Wine.

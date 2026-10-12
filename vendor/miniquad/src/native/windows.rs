@@ -10,7 +10,7 @@ use crate::{
 use winapi::{
     shared::{
         hidusage::{HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC},
-        minwindef::{DWORD, HIWORD, LOWORD, LPARAM, LRESULT, MAX_PATH, TRUE, UINT, WPARAM},
+        minwindef::{DWORD, HIWORD, LOWORD, LPARAM, LRESULT, TRUE, UINT, WPARAM},
         ntdef::NULL,
         windef::{HBRUSH, HCURSOR, HDC, HICON, HWND, POINT, RECT},
         windowsx::{GET_X_LPARAM, GET_Y_LPARAM},
@@ -18,7 +18,7 @@ use winapi::{
     um::{
         imm::{HIMC, ImmGetContext, ImmReleaseContext},
         libloaderapi::{GetModuleHandleW, GetProcAddress},
-        shellapi::{DragAcceptFiles, DragQueryFileW, HDROP},
+        shellapi::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP},
         shellscalingapi::*,
         wingdi::*,
         winuser::*,
@@ -740,25 +740,29 @@ unsafe extern "system" fn win32_wndproc(
         }
         WM_DROPFILES => {
             let hdrop = wparam as HDROP;
-            let mut path = core::mem::MaybeUninit::<[u16; MAX_PATH]>::uninit();
             let num_drops = DragQueryFileW(hdrop, u32::MAX, std::ptr::null_mut(), 0);
 
             let mut d = crate::native_display().lock().unwrap();
             d.dropped_files = Default::default();
             for i in 0..num_drops {
-                let path_ptr = path.as_mut_ptr() as *mut u16;
-                let path_len = DragQueryFileW(hdrop, i, path_ptr, MAX_PATH as u32) as usize;
-                if path_len > 0 {
-                    // SAFETY: `DragQueryFileW` initializes `path_ptr` up to `path_len`
-                    // elements before use, and we only access the initialized portion.
-                    let path = unsafe {
-                        let path = path.assume_init();
-                        PathBuf::from(OsString::from_wide(&path[0..path_len]))
-                    };
+                // First ask how long the path is, so paths over MAX_PATH are not cut short.
+                let len = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0) as usize;
+                if len == 0 {
+                    continue;
+                }
+                let mut buf = vec![0u16; len + 1];
+                let got = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), (len + 1) as u32) as usize;
+                if got > 0 {
                     d.dropped_files.bytes.push(Vec::new());
-                    d.dropped_files.paths.push(path);
+                    d.dropped_files
+                        .paths
+                        .push(PathBuf::from(OsString::from_wide(&buf[..got.min(len)])));
                 }
             }
+            // The paths are stored, but the application only learns about them from this event.
+            drop(d);
+            DragFinish(hdrop);
+            event_handler.files_dropped_event();
         }
         WM_ACTIVATE => {
             if LOWORD(wparam as _) == WA_ACTIVE || LOWORD(wparam as _) == WA_CLICKACTIVE {
