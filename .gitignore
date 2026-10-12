@@ -6,3 +6,5 @@ maps/
 scores.json
 perf/
 dist/
+__pycache__/
+*.pyc
