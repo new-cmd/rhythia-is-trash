@@ -40,6 +40,9 @@ enum Field {
     NoteCore,
     LevelPulse,
     BeatGlow,
+    NoteColor,
+    CursorStyle,
+    CursorColor,
 }
 
 struct Row {
@@ -69,7 +72,7 @@ const fn row(
     }
 }
 
-const ROWS: [Row; 25] = [
+const ROWS: [Row; 28] = [
     row(
         "look",
         "Look",
@@ -184,6 +187,30 @@ const ROWS: [Row; 25] = [
     row("no_fail", "No fail", Field::NoFail, 0.0, 1.0, 1.0),
     row("note_core", "Note style", Field::NoteCore, 0.0, 1.0, 1.0),
     row(
+        "note_color",
+        "Note colour",
+        Field::NoteColor,
+        0.0,
+        crate::look::COLORS.len() as f32,
+        1.0,
+    ),
+    row(
+        "cursor_style",
+        "Cursor",
+        Field::CursorStyle,
+        0.0,
+        (crate::skin::CURSOR_STYLES.len() - 1) as f32,
+        1.0,
+    ),
+    row(
+        "cursor_color",
+        "Cursor colour",
+        Field::CursorColor,
+        0.0,
+        (crate::look::COLORS.len() - 1) as f32,
+        1.0,
+    ),
+    row(
         "level_pulse",
         "Level-up pulse",
         Field::LevelPulse,
@@ -242,6 +269,9 @@ pub struct Settings {
     pub look: usize,
     pub wallpaper: String,
     pub wallpaper_dim: f32,
+    pub note_color: usize,
+    pub cursor_style: usize,
+    pub cursor_color: usize,
 }
 
 impl Default for Settings {
@@ -272,6 +302,9 @@ impl Default for Settings {
             look: 0,
             wallpaper: String::new(),
             wallpaper_dim: 0.55,
+            note_color: 0,
+            cursor_style: 0,
+            cursor_color: 0,
         }
     }
 }
@@ -432,6 +465,9 @@ impl Settings {
             Field::WallpaperDim => self.wallpaper_dim,
             Field::Look => self.look as f32,
             Field::Wallpaper => 0.0,
+            Field::NoteColor => self.note_color as f32,
+            Field::CursorStyle => self.cursor_style as f32,
+            Field::CursorColor => self.cursor_color as f32,
             Field::Space => Space::ALL
                 .iter()
                 .position(|s| *s == self.space)
@@ -470,6 +506,9 @@ impl Settings {
                 self.space = crate::look::get(self.look).space;
             }
             Field::Wallpaper => {}
+            Field::NoteColor => self.note_color = v.round() as usize,
+            Field::CursorStyle => self.cursor_style = v.round() as usize,
+            Field::CursorColor => self.cursor_color = v.round() as usize,
             Field::WallpaperDim => self.wallpaper_dim = v.clamp(0.0, 0.85),
         }
     }
@@ -504,6 +543,11 @@ impl Settings {
                 let n = Space::ALL.len() as i32;
                 let i = (self.get(Field::Space) as i32 + dir as i32).rem_euclid(n);
                 self.space = Space::ALL[i as usize];
+            }
+            Field::NoteColor | Field::CursorStyle | Field::CursorColor => {
+                let n = (r.max - r.min) as i32 + 1;
+                let i = (self.get(r.field) as i32 + dir as i32).rem_euclid(n);
+                self.set(r.field, i as f32);
             }
             f => self.set(f, self.get(f) + dir * r.step * multiplier),
         }
@@ -548,6 +592,9 @@ impl Settings {
                 }
             }
             Field::WallpaperDim => format!("{:.0}%", self.wallpaper_dim * 100.0),
+            Field::NoteColor => crate::look::note_color_name(self.note_color).to_string(),
+            Field::CursorStyle => crate::skin::CURSOR_STYLES[self.cursor_style].to_string(),
+            Field::CursorColor => crate::look::COLORS[self.cursor_color].name.to_string(),
         }
     }
 }
@@ -568,27 +615,42 @@ fn is_choice(field: Field) -> bool {
             | Field::LevelPulse
             | Field::BeatGlow
             | Field::Bypass
+            | Field::NoteColor
+            | Field::CursorStyle
+            | Field::CursorColor
     )
 }
 
-const TAB_NAMES: [&str; 4] = ["Look", "Play", "Sound", "Video"];
+const TAB_NAMES: [&str; 5] = ["Look", "Skin", "Play", "Sound", "Video"];
+const SKIN_TAB: usize = 1;
+const PLAY_TAB: usize = 2;
+const SOUND_TAB: usize = 3;
 
 struct TabRows {
     main: &'static [Field],
     more: &'static [Field],
 }
 
-const TABS: [TabRows; 4] = [
+const TABS: [TabRows; 5] = [
     TabRows {
         main: &[
             Field::Look,
             Field::Space,
             Field::Wallpaper,
             Field::WallpaperDim,
-            Field::Trail,
-            Field::NoteCore,
         ],
         more: &[Field::Glow, Field::LevelPulse, Field::BeatGlow],
+    },
+    TabRows {
+        main: &[
+            Field::NoteColor,
+            Field::NoteCore,
+            Field::CursorStyle,
+            Field::CursorColor,
+            Field::CursorSize,
+            Field::Trail,
+        ],
+        more: &[],
     },
     TabRows {
         main: &[
@@ -596,7 +658,6 @@ const TABS: [TabRows; 4] = [
             Field::ApproachRate,
             Field::ApproachDistance,
             Field::NoteSize,
-            Field::CursorSize,
         ],
         more: &[Field::Parallax, Field::Fov, Field::NoFail],
     },
@@ -620,8 +681,11 @@ enum Entry {
 fn entries(tab: usize, more: bool) -> Vec<Entry> {
     let t = &TABS[tab];
     let mut out: Vec<Entry> = t.main.iter().map(|f| Entry::Field(*f)).collect();
-    if tab == 2 {
+    if tab == SOUND_TAB {
         out.push(Entry::Calibrate);
+    }
+    if t.more.is_empty() {
+        return out;
     }
     out.push(Entry::More);
     if more {
@@ -644,28 +708,177 @@ struct Layout {
     track0: f32,
     track1: f32,
     value_x: f32,
+    row_right: f32,
     tabs_y: f32,
     scale: f32,
 }
 
-fn layout_for(w: f32, h: f32, count: usize) -> Layout {
+/// The Skin tab squeezes its rows into the left part of the screen so the preview fits beside them.
+fn layout_for(w: f32, h: f32, count: usize, tab: usize) -> Layout {
     let scale = (h / 720.0).clamp(0.7, 1.5);
-    let track0 = w * 0.42;
     let top = 196.0 * scale;
+    let (track0, track1, value_x) = if tab == SKIN_TAB {
+        (w * 0.30, w * 0.47, w * 0.58)
+    } else {
+        (w * 0.42, w * 0.42 + (w * 0.28).max(200.0), w - 96.0)
+    };
     Layout {
         top,
         row_h: ((h - 86.0 - top) / count.max(1) as f32).clamp(18.0, 38.0 * scale),
         label_x: 104.0,
         track0,
-        track1: track0 + (w * 0.28).max(200.0),
-        value_x: w - 96.0,
+        track1,
+        value_x,
+        row_right: value_x + 48.0,
         tabs_y: 156.0 * scale,
         scale,
     }
 }
 
-fn layout(count: usize) -> Layout {
-    layout_for(screen_width(), screen_height(), count)
+fn layout(tab: usize, count: usize) -> Layout {
+    layout_for(screen_width(), screen_height(), count, tab)
+}
+
+fn preview_area(lay: &Layout, w: f32, h: f32) -> Rect {
+    let x = lay.row_right + 24.0;
+    let size = (w - 64.0 - x).min(h - 96.0 - lay.top).max(0.0);
+    Rect::new(x, lay.top, w - 64.0 - x, size)
+}
+
+/// A looping demo of the Skin settings: notes fly in on a 3x3 grid in the chosen colours and the cursor glides onto each one.
+fn draw_preview(skin: &Skin, text: &Text, s: &Settings, area: Rect, alpha: f32) {
+    if area.w < 120.0 || area.h < 120.0 {
+        return;
+    }
+    let bg = crate::look::fog();
+    draw_rectangle(
+        area.x,
+        area.y,
+        area.w,
+        area.h,
+        Color {
+            a: 0.92 * alpha,
+            ..bg
+        },
+    );
+    draw_rectangle_lines(
+        area.x,
+        area.y,
+        area.w,
+        area.h,
+        1.0,
+        Color::new(1.0, 1.0, 1.0, 0.12 * alpha),
+    );
+    text.draw(
+        "PREVIEW",
+        vec2(area.x + 14.0, area.y + 18.0),
+        Style::new(12.0, Color::new(1.0, 1.0, 1.0, 0.45 * alpha))
+            .bold(true)
+            .middle(),
+    );
+    let center = vec2(area.x + area.w / 2.0, area.y + 14.0 + area.h / 2.0);
+    let cell = (area.w.min(area.h) - 48.0) / 3.4;
+    let at = |x: f32, y: f32| center + vec2(x, -y) * cell;
+    for y in -1..=1 {
+        for x in -1..=1 {
+            let p = at(x as f32, y as f32);
+            let half = cell * 0.45;
+            draw_rectangle_lines(
+                p.x - half,
+                p.y - half,
+                half * 2.0,
+                half * 2.0,
+                1.0,
+                Color::new(1.0, 1.0, 1.0, 0.06 * alpha),
+            );
+        }
+    }
+    let blit = |tex: &Texture2D, p: Vec2, size: f32, color: Color| {
+        draw_texture_ex(
+            tex,
+            p.x - size / 2.0,
+            p.y - size / 2.0,
+            color,
+            DrawTextureParams {
+                dest_size: Some(Vec2::splat(size)),
+                ..Default::default()
+            },
+        );
+    };
+    const PATH: [(f32, f32); 6] = [
+        (-1.0, 1.0),
+        (1.0, 0.0),
+        (0.0, -1.0),
+        (-1.0, -1.0),
+        (1.0, 1.0),
+        (0.0, 0.0),
+    ];
+    const BEAT: f64 = 0.9;
+    let spot = |k: usize| {
+        let (x, y) = PATH[k % PATH.len()];
+        at(x, y)
+    };
+    let cursor_at = |t: f64| {
+        let k = (t / BEAT).floor() as usize;
+        let u = ((t / BEAT).fract() as f32 * 1.6).min(1.0);
+        let ease = u * u * (3.0 - 2.0 * u);
+        spot(k + PATH.len() - 1).lerp(spot(k), ease)
+    };
+    let now = get_time();
+    let k = (now / BEAT).floor() as usize;
+    let phase = (now / BEAT).fract() as f32;
+    let palette = crate::look::note_palette(s.note_color);
+    for j in (0..2).rev() {
+        let approach = (phase + 1.0 - j as f32) / 2.0;
+        let note = palette[(k + j) % palette.len()];
+        let fade = (approach * 3.0).min(1.0) * alpha;
+        let size = cell * s.note_size * (0.3 + 0.7 * approach);
+        let p = spot(k + j);
+        blit(
+            &skin.note_glow,
+            p,
+            size * crate::skin::NOTE_GLOW_SCALE,
+            Color {
+                a: 0.35 * fade,
+                ..note
+            },
+        );
+        blit(&skin.fill, p, size, Color { a: fade, ..note });
+        blit(&skin.fill, p, size * 0.74, Color { a: fade, ..bg });
+        if s.note_core {
+            let hot = Color::new(
+                note.r + (1.0 - note.r) * 0.65,
+                note.g + (1.0 - note.g) * 0.65,
+                note.b + (1.0 - note.b) * 0.65,
+                fade,
+            );
+            blit(&skin.fill, p, size * 0.8, hot);
+        }
+    }
+    let cursor_tex = skin.cursor(s.cursor_style);
+    let cursor_px = cell * crate::game::CURSOR_SIZE * s.cursor_size;
+    let tint = crate::look::cursor_color(s.cursor_color);
+    if s.cursor_trail {
+        for i in (1..=8).rev() {
+            let back = f64::from(i) * 0.012;
+            let a = 1.0 - i as f32 / 9.0;
+            blit(
+                cursor_tex,
+                cursor_at(now - back),
+                cursor_px * (0.35 + 0.65 * a),
+                Color {
+                    a: a * 0.4 * alpha,
+                    ..palette[0]
+                },
+            );
+        }
+    }
+    blit(
+        cursor_tex,
+        cursor_at(now),
+        cursor_px,
+        Color { a: alpha, ..tint },
+    );
 }
 
 fn tab_span(i: usize, scale: f32) -> (f32, f32) {
@@ -680,7 +893,7 @@ pub enum Exit {
 
 pub struct SettingsScreen {
     tab: usize,
-    more: [bool; 4],
+    more: [bool; 5],
     selected: usize,
     entered: f64,
     last_mouse: Vec2,
@@ -694,7 +907,7 @@ impl SettingsScreen {
     pub fn new() -> Self {
         Self {
             tab: 0,
-            more: [false; 4],
+            more: [false; 5],
             selected: 0,
             entered: get_time(),
             last_mouse: Vec2::from(mouse_position()),
@@ -736,7 +949,7 @@ impl SettingsScreen {
             self.switch((self.tab as i32 + step).rem_euclid(TABS.len() as i32) as usize);
         }
         let mouse = Vec2::from(mouse_position());
-        let head = layout(entries(self.tab, self.more[self.tab]).len());
+        let head = layout(self.tab, entries(self.tab, self.more[self.tab]).len());
         if is_mouse_button_pressed(MouseButton::Left)
             && (mouse.y - head.tabs_y).abs() < 16.0 * head.scale
             && let Some(i) = (0..TABS.len()).find(|i| {
@@ -760,8 +973,8 @@ impl SettingsScreen {
             self.selected =
                 (self.selected as i32 - wheel.signum() as i32).clamp(0, n as i32 - 1) as usize;
         }
-        let lay = layout(n);
-        let over = (mouse.y >= lay.top && mouse.x >= 48.0 && mouse.x <= screen_width() - 48.0)
+        let lay = layout(self.tab, n);
+        let over = (mouse.y >= lay.top && mouse.x >= 48.0 && mouse.x <= lay.row_right)
             .then(|| ((mouse.y - lay.top) / lay.row_h) as usize)
             .filter(|r| *r < n);
         if let Some(r) = over
@@ -861,7 +1074,7 @@ impl SettingsScreen {
         fx.present();
         let text = Text::screen(skin);
         let list = entries(self.tab, self.more[self.tab]);
-        let lay = layout(list.len());
+        let lay = layout(self.tab, list.len());
         let w = text.screen.x;
         let accent = crate::look::color(crate::look::get(s.look).notes[0]);
         let ac = |a: f32| Color::new(accent.r, accent.g, accent.b, a);
@@ -909,7 +1122,13 @@ impl SettingsScreen {
                 ),
             };
             if on {
-                draw_rectangle(48.0, y, w - 96.0, lay.row_h - 6.0, ac(0.07 * intro));
+                draw_rectangle(
+                    48.0,
+                    y,
+                    lay.row_right - 48.0,
+                    lay.row_h - 6.0,
+                    ac(0.07 * intro),
+                );
                 draw_rectangle(48.0, y, 3.0, lay.row_h - 6.0, ac(intro));
             }
             let color = tint(if on { 1.0 } else { 0.6 });
@@ -941,12 +1160,16 @@ impl SettingsScreen {
                         tint(if on { 1.0 } else { 0.8 }),
                     );
                 }
-                if *f == Field::Look {
-                    for (k, hex) in crate::look::get(s.look).notes.iter().enumerate() {
-                        let mut c = crate::look::color(*hex);
-                        c.a = intro;
-                        draw_rectangle(lay.track0 + k as f32 * 26.0, center - 9.0, 20.0, 18.0, c);
-                    }
+                let swatches: Vec<u32> = match f {
+                    Field::Look => crate::look::get(s.look).notes.to_vec(),
+                    Field::NoteColor => crate::look::note_pair(s.note_color, s.look).to_vec(),
+                    Field::CursorColor => vec![crate::look::COLORS[s.cursor_color].pair[0]],
+                    _ => Vec::new(),
+                };
+                for (k, hex) in swatches.iter().enumerate() {
+                    let mut c = crate::look::color(*hex);
+                    c.a = intro;
+                    draw_rectangle(lay.track0 + k as f32 * 26.0, center - 9.0, 20.0, 18.0, c);
                 }
             }
             let value_style = Style {
@@ -959,13 +1182,16 @@ impl SettingsScreen {
                 value_style.bold(on).middle(),
             );
         }
+        if self.tab == SKIN_TAB {
+            draw_preview(skin, &text, s, preview_area(&lay, w, text.screen.y), intro);
+        }
         let hint = "Q/E tabs   Up/Down select   Left/Right adjust (Shift x5)   Backspace reset   Delete reset tab   R undo   C calibrate   Esc back";
         text.draw(
             hint,
             vec2(64.0, screen_height() - 56.0),
             Style::new(14.0, tint(0.55)),
         );
-        if self.tab == 1 {
+        if self.tab == PLAY_TAB {
             let appear = format!(
                 "notes appear {:.2}s before the hit",
                 s.approach_distance / s.approach_rate
@@ -1013,10 +1239,11 @@ mod tests {
             entries(0, true).len(),
             TABS[0].main.len() + 1 + TABS[0].more.len()
         );
-        assert!(entries(2, false).contains(&Entry::Calibrate));
-        assert!(!entries(1, true).contains(&Entry::Calibrate));
-        assert!(!entries(2, false).contains(&Entry::Field(Field::AudioBuffer)));
-        assert!(entries(2, true).contains(&Entry::Field(Field::AudioBuffer)));
+        assert!(entries(SOUND_TAB, false).contains(&Entry::Calibrate));
+        assert!(!entries(PLAY_TAB, true).contains(&Entry::Calibrate));
+        assert!(!entries(SOUND_TAB, false).contains(&Entry::Field(Field::AudioBuffer)));
+        assert!(entries(SOUND_TAB, true).contains(&Entry::Field(Field::AudioBuffer)));
+        assert!(!entries(SKIN_TAB, false).contains(&Entry::More));
     }
 
     #[test]
@@ -1125,12 +1352,37 @@ mod tests {
         assert_eq!(s.sensitivity, Settings::default().sensitivity);
         assert_eq!(s.look, 3);
         s.sensitivity = 2.0;
+        s.cursor_style = 2;
         s.reset_tab(0);
         assert_eq!(
             (s.look, s.wallpaper.as_str(), s.cursor_trail),
-            (0, "", false)
+            (0, "", true)
         );
         assert_eq!(s.sensitivity, 2.0);
+        s.reset_tab(SKIN_TAB);
+        assert_eq!((s.cursor_trail, s.cursor_style), (false, 0));
+    }
+
+    #[test]
+    fn skin_choices_wrap_and_save() {
+        let mut s = Settings::default();
+        s.nudge(row_of(Field::NoteColor), -1.0, 1.0);
+        assert_eq!(s.note_color, crate::look::COLORS.len());
+        s.nudge(row_of(Field::NoteColor), 1.0, 1.0);
+        assert_eq!(s.note_color, 0);
+        for _ in 0..crate::skin::CURSOR_STYLES.len() {
+            s.nudge(row_of(Field::CursorStyle), 1.0, 1.0);
+        }
+        assert_eq!(s.cursor_style, 0);
+        s.note_color = 4;
+        s.cursor_style = 3;
+        s.cursor_color = 6;
+        assert_eq!(Settings::parse(&s.to_text()), Some(s.clone()));
+        let wild = Settings::parse(r#"{"note_color": 99, "cursor_style": -4}"#).unwrap();
+        assert_eq!(
+            (wild.note_color, wild.cursor_style),
+            (crate::look::COLORS.len(), 0)
+        );
     }
 
     #[test]
@@ -1153,7 +1405,7 @@ mod tests {
         ] {
             for tab in 0..TABS.len() {
                 let n = entries(tab, true).len();
-                let lay = layout_for(w, h, n);
+                let lay = layout_for(w, h, n, tab);
                 let bottom = lay.top + n as f32 * lay.row_h - 6.0;
                 assert!(
                     bottom <= h - 70.0,
@@ -1166,6 +1418,13 @@ mod tests {
                 );
                 let (x, tw) = tab_span(TABS.len() - 1, lay.scale);
                 assert!(x + tw < w);
+                if tab == SKIN_TAB {
+                    let preview = preview_area(&lay, w, h);
+                    assert!(
+                        preview.x >= lay.row_right && preview.right() <= w && preview.h >= 120.0,
+                        "{w}x{h}: preview overlaps the rows or is too small"
+                    );
+                }
             }
         }
     }

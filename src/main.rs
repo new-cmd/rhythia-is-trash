@@ -292,7 +292,12 @@ impl Entry {
             settings.sfx_volume,
             settings.audio_buffer as u32,
         );
-        let mut game = Game::new(map, music, palette(), settings.clone());
+        let mut game = Game::new(
+            map,
+            music,
+            look::note_palette(settings.note_color),
+            settings.clone(),
+        );
         game.key = difficulty.key(&self.label());
         game.best = scores.best(&game.key);
         game.load_ms = [parse_ms, decode_ms, ms(started) - parse_ms - decode_ms];

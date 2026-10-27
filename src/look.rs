@@ -124,6 +124,77 @@ pub fn active_palette() -> Vec<Color> {
     palette(ACTIVE.load(Ordering::Relaxed))
 }
 
+/// Colours a player can pick for notes and the cursor. Notes alternate between the pair, like a look's own palette.
+pub struct Swatch {
+    pub name: &'static str,
+    pub pair: [u32; 2],
+}
+
+pub const COLORS: [Swatch; 9] = [
+    Swatch {
+        name: "White",
+        pair: [0xffffff, 0xbfc6dc],
+    },
+    Swatch {
+        name: "Pink",
+        pair: [0xff0059, 0xffd8e6],
+    },
+    Swatch {
+        name: "Red",
+        pair: [0xff2a2a, 0xffb8ad],
+    },
+    Swatch {
+        name: "Orange",
+        pair: [0xff7a00, 0xffd6a8],
+    },
+    Swatch {
+        name: "Yellow",
+        pair: [0xffd400, 0xfff3a6],
+    },
+    Swatch {
+        name: "Green",
+        pair: [0x29e36b, 0xbfffd2],
+    },
+    Swatch {
+        name: "Cyan",
+        pair: [0x00e5ff, 0xbdf7ff],
+    },
+    Swatch {
+        name: "Blue",
+        pair: [0x3d74ff, 0xbccdff],
+    },
+    Swatch {
+        name: "Purple",
+        pair: [0x9b4dff, 0xdfc8ff],
+    },
+];
+
+/// Note colour 0 follows the look; anything above picks `COLORS[n - 1]`.
+pub fn note_pair(note_color: usize, look: usize) -> [u32; 2] {
+    match note_color.checked_sub(1).and_then(|i| COLORS.get(i)) {
+        Some(s) => s.pair,
+        None => get(look).notes,
+    }
+}
+
+pub fn note_color_name(note_color: usize) -> &'static str {
+    match note_color.checked_sub(1).and_then(|i| COLORS.get(i)) {
+        Some(s) => s.name,
+        None => "From look",
+    }
+}
+
+pub fn note_palette(note_color: usize) -> Vec<Color> {
+    note_pair(note_color, ACTIVE.load(Ordering::Relaxed))
+        .iter()
+        .map(|&h| color(h))
+        .collect()
+}
+
+pub fn cursor_color(index: usize) -> Color {
+    color(COLORS[index.min(COLORS.len() - 1)].pair[0])
+}
+
 pub fn palette(index: usize) -> Vec<Color> {
     get(index).notes.iter().map(|&h| color(h)).collect()
 }
@@ -161,6 +232,23 @@ mod tests {
             assert!((0.0..=1.5).contains(&look.bloom) && (0.0..=1.0).contains(&look.vignette));
         }
         assert_eq!(get(99).name, "Competitive");
+    }
+
+    #[test]
+    fn picked_note_colors_override_the_look_and_zero_follows_it() {
+        assert_eq!(note_pair(0, 2), get(2).notes);
+        assert_eq!(note_pair(2, 2), COLORS[1].pair);
+        assert_eq!(note_pair(99, 2), get(2).notes);
+        assert_eq!(note_color_name(0), "From look");
+        assert_eq!(cursor_color(0), color(0xffffff));
+        assert_eq!(cursor_color(99), color(COLORS[COLORS.len() - 1].pair[0]));
+        for s in &COLORS {
+            assert!(
+                luma(s.pair[0]) > 0.15 && luma(s.pair[1]) > 0.15,
+                "{}",
+                s.name
+            );
+        }
     }
 
     #[test]

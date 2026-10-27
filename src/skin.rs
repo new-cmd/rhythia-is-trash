@@ -30,7 +30,7 @@ void main() {
 pub struct Skin {
     pub note_mesh: Vec<([Vec3; 4], f32)>,
     pub note_glow: Texture2D,
-    pub cursor: Texture2D,
+    pub cursors: Vec<Texture2D>,
     pub fill: Texture2D,
     pub halo: Texture2D,
     pub wave: Texture2D,
@@ -44,6 +44,7 @@ pub struct Skin {
 }
 
 pub const NOTE_GLOW_SCALE: f32 = 1.7;
+pub const CURSOR_STYLES: [&str; 5] = ["Square", "Ring", "Dot", "Cross", "Diamond"];
 const SQUIRCLE_EXP: f32 = 4.5;
 const SQUIRCLE_INNER: f32 = 0.714;
 pub const SQUIRCLE_DEPTH: f32 = 0.125;
@@ -101,12 +102,10 @@ impl Skin {
             fill: bake(64, 64, 1.0, |p, px| {
                 cover(sd_round_box(p, Vec2::splat(0.94), 0.45), px)
             }),
-            cursor: bake(128, 128, 1.0, |p, px| {
-                let d = p.abs().max_element() - 0.99;
-                let outer = cover(d, px);
-                let inner = cover(d + 0.23, px);
-                (outer - inner) + inner * 0.05
-            }),
+            cursors: CURSOR_STYLES
+                .iter()
+                .map(|style| bake(128, 128, 1.0, |p, px| cursor_alpha(style, p, px)))
+                .collect(),
             panel: bake(64, 160, 1.0, |p, _| {
                 let fade = ((1.0 - p.y.abs()) / 0.21).clamp(0.0, 1.0);
                 0.38 * fade
@@ -183,6 +182,31 @@ fn material(dst: BlendFactor) -> Material {
         },
     )
     .expect("built-in shader compiles")
+}
+
+impl Skin {
+    pub fn cursor(&self, style: usize) -> &Texture2D {
+        &self.cursors[style.min(self.cursors.len() - 1)]
+    }
+}
+
+/// Outlines keep the original square cursor's weight: a 0.23 wide edge over a faint fill.
+fn cursor_alpha(style: &str, p: Vec2, px: f32) -> f32 {
+    let ring = |d: f32| {
+        let outer = cover(d, px);
+        let inner = cover(d + 0.23, px);
+        (outer - inner) + inner * 0.05
+    };
+    match style {
+        "Ring" => ring(p.length() - 0.97),
+        "Dot" => cover(p.length() - 0.55, px),
+        "Cross" => {
+            let bar = |half: Vec2| sd_round_box(p, half, 0.06);
+            cover(bar(vec2(0.97, 0.13)).min(bar(vec2(0.13, 0.97))), px)
+        }
+        "Diamond" => ring((p.x.abs() + p.y.abs() - 0.99) * std::f32::consts::FRAC_1_SQRT_2),
+        _ => ring(p.abs().max_element() - 0.99),
+    }
 }
 
 fn sd_round_box(p: Vec2, half: Vec2, r: f32) -> f32 {

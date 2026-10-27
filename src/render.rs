@@ -1058,7 +1058,7 @@ impl Game {
         let run = &self.run;
         if self.settings.cursor_trail && !crate::look::active().calm {
             gl_use_material(&skin.additive);
-            let mut ribbon = Batch::new(&skin.cursor);
+            let mut ribbon = Batch::new(skin.cursor(self.settings.cursor_style));
             for &(t, p) in run.trail.iter().skip(1).rev() {
                 if p == run.cursor {
                     continue;
@@ -1082,13 +1082,13 @@ impl Game {
             drop(ribbon);
             gl_use_material(&skin.blend);
         }
-        let mut b = Batch::new(&skin.cursor);
+        let mut b = Batch::new(skin.cursor(self.settings.cursor_style));
         sprite(
             &mut b,
             run.cursor.extend(0.0),
             Vec2::splat(CURSOR_SIZE * self.settings.cursor_size),
             0.0,
-            WHITE,
+            crate::look::cursor_color(self.settings.cursor_color),
         );
     }
 
