@@ -34,7 +34,7 @@ use crate::{
     audio::Music,
     calibrate::Calibration,
     game::{Action, Game},
-    map::{Map, Meta},
+    map::{Difficulty, Map, Meta},
     perf::{Pacer, Perf},
     render::{Style, Text},
     scores::{Best, Scores},
@@ -250,11 +250,26 @@ impl Entry {
         }
     }
 
-    fn load(&self, settings: &Settings, scores: &Scores) -> Result<Game, String> {
+    fn name(&self) -> String {
+        let meta = match self {
+            Entry::File(p) => meta_of(p),
+            Entry::Demo => None,
+        };
+        meta.map(|m| m.title)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| self.label())
+    }
+
+    fn load(
+        &self,
+        difficulty: Difficulty,
+        settings: &Settings,
+        scores: &Scores,
+    ) -> Result<Game, String> {
         let started = std::time::Instant::now();
         let ms = |t: std::time::Instant| t.elapsed().as_secs_f32() * 1000.0;
         let mut parse_ms = 0.0;
-        let (map, track) = match self {
+        let (mut map, track) = match self {
             Entry::Demo => {
                 let d = demo::build();
                 (d.map, Some(audio::from_mono(&d.samples, demo::SAMPLE_RATE)))
@@ -269,6 +284,7 @@ impl Entry {
                 (map, track)
             }
         };
+        difficulty.apply(&mut map.notes);
         let decode_ms = ms(started) - parse_ms;
         let music = Music::new(
             track,
@@ -277,7 +293,7 @@ impl Entry {
             settings.audio_buffer as u32,
         );
         let mut game = Game::new(map, music, palette(), settings.clone());
-        game.key = self.label();
+        game.key = difficulty.key(&self.label());
         game.best = scores.best(&game.key);
         game.load_ms = [parse_ms, decode_ms, ms(started) - parse_ms - decode_ms];
         Ok(game)
@@ -286,13 +302,17 @@ impl Entry {
 
 enum Pick {
     Quit,
-    Play(Entry),
+    Play(Entry, Difficulty),
     Settings,
 }
 
 struct Select {
     entries: Vec<Entry>,
     selected: usize,
+    /// The song waiting for a difficulty, while that picker is open.
+    choosing: Option<Entry>,
+    opened: f64,
+    difficulty: Difficulty,
     scroll: f32,
     error: Option<String>,
     notice: Option<String>,
@@ -312,6 +332,9 @@ impl Select {
         Self {
             entries,
             selected: 0,
+            choosing: None,
+            opened: 0.0,
+            difficulty: Difficulty::Medium,
             scroll: 0.0,
             error: None,
             notice: None,
@@ -384,7 +407,67 @@ impl Select {
         }
     }
 
+    fn choose(&mut self, row: usize) {
+        self.choosing = Some(self.entries[row].clone());
+        self.opened = get_time();
+    }
+
+    /// Where the three difficulty cards sit, shared by clicks and drawing.
+    fn cards() -> [Rect; 3] {
+        let (w, h, gap) = (200.0, 108.0, 24.0);
+        let left = (screen_width() - (w * 3.0 + gap * 2.0)) / 2.0;
+        let top = screen_height() * 0.5 - h / 2.0;
+        std::array::from_fn(|i| Rect::new(left + i as f32 * (w + gap), top, w, h))
+    }
+
+    fn update_choice(&mut self, entry: Entry) -> Option<Pick> {
+        if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Backspace) {
+            self.choosing = None;
+            return None;
+        }
+        let mut at = Difficulty::ALL
+            .iter()
+            .position(|d| *d == self.difficulty)
+            .unwrap_or(1);
+        if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::Up) {
+            at = at.saturating_sub(1);
+        }
+        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::Down) {
+            at = (at + 1).min(Difficulty::ALL.len() - 1);
+        }
+        let mut go = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space);
+        for (i, key) in [KeyCode::Key1, KeyCode::Key2, KeyCode::Key3]
+            .into_iter()
+            .enumerate()
+        {
+            if is_key_pressed(key) {
+                at = i;
+                go = true;
+            }
+        }
+        let mouse = Vec2::from(mouse_position());
+        if let Some(i) = Self::cards().iter().position(|r| r.contains(mouse)) {
+            if mouse != self.last_mouse {
+                at = i;
+            }
+            if is_mouse_button_pressed(MouseButton::Left) {
+                at = i;
+                go = true;
+            }
+        }
+        self.last_mouse = mouse;
+        self.difficulty = Difficulty::ALL[at];
+        if go {
+            self.choosing = None;
+            return Some(Pick::Play(entry, self.difficulty));
+        }
+        None
+    }
+
     fn update(&mut self) -> Option<Pick> {
+        if let Some(entry) = self.choosing.clone() {
+            return self.update_choice(entry);
+        }
         if is_key_pressed(KeyCode::Delete) {
             self.remove_selected();
         }
@@ -432,13 +515,15 @@ impl Select {
                 if is_mouse_button_pressed(MouseButton::Left) {
                     self.selected = row;
                     self.last_mouse = mouse;
-                    return Some(Pick::Play(self.entries[row].clone()));
+                    self.choose(row);
+                    return None;
                 }
             }
         }
         self.last_mouse = mouse;
         if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Space) {
-            return Some(Pick::Play(self.entries[self.selected].clone()));
+            self.choose(self.selected);
+            return None;
         }
         let room = (bottom - self.top()).max(ROW_H);
         let target = (self.selected as f32 * ROW_H - room * 0.45)
@@ -605,6 +690,81 @@ impl Select {
             vec2(64.0, screen_height() - 28.0),
             Style::new(13.0, c),
         );
+        if let Some(entry) = &self.choosing {
+            self.draw_choice(&text, entry, scores);
+        }
+    }
+
+    fn draw_choice(&self, text: &Text, entry: &Entry, scores: &Scores) {
+        let fade = (1.0 - (-((get_time() - self.opened) as f32) * 10.0).exp()).clamp(0.0, 1.0);
+        let (w, h) = (text.screen.x, text.screen.y);
+        draw_rectangle(0.0, 0.0, w, h, Color::new(0.0, 0.0, 0.0, 0.72 * fade));
+        let tint = |alpha: f32| Color::new(1.0, 1.0, 1.0, alpha * fade);
+        let centered = |size: f32, color: Color| Style {
+            align: render::Align::Center,
+            ..Style::new(size, color)
+        };
+        let cards = Self::cards();
+        let top = cards[0].y;
+        text.draw(
+            "CHOOSE DIFFICULTY",
+            vec2(w / 2.0, top - 92.0),
+            centered(13.0, tint(0.5)).bold(true),
+        );
+        text.draw(
+            &text.fit(&entry.name(), 30.0, w - 128.0),
+            vec2(w / 2.0, top - 50.0),
+            centered(30.0, tint(1.0)).bold(true),
+        );
+        for (d, r) in Difficulty::ALL.into_iter().zip(cards) {
+            let on = d == self.difficulty;
+            let [cr, cg, cb] = match d {
+                Difficulty::Easy => [0.4, 1.0, 0.6],
+                Difficulty::Medium => [1.0, 0.8, 0.3],
+                Difficulty::Hard => [1.0, 0.2, 0.45],
+            };
+            let accent = |alpha: f32| Color::new(cr, cg, cb, alpha * fade);
+            let lift = if on { 6.0 } else { 0.0 };
+            let y = r.y - lift;
+            draw_rectangle(r.x, y, r.w, r.h, accent(if on { 0.16 } else { 0.05 }));
+            draw_rectangle(r.x, y, r.w, 3.0, accent(if on { 1.0 } else { 0.35 }));
+            if on {
+                draw_rectangle_lines(r.x, y, r.w, r.h, 1.5, accent(0.8));
+            }
+            let mid = r.x + r.w / 2.0;
+            let index = Difficulty::ALL.iter().position(|x| *x == d).unwrap_or(0) + 1;
+            text.draw(
+                &index.to_string(),
+                vec2(r.x + 14.0, y + 22.0),
+                Style::new(12.0, tint(0.3)).middle(),
+            );
+            text.draw(
+                d.name(),
+                vec2(mid, y + 38.0),
+                centered(24.0, if on { accent(1.0) } else { tint(0.6) })
+                    .bold(true)
+                    .middle(),
+            );
+            text.draw(
+                d.blurb(),
+                vec2(mid, y + 66.0),
+                centered(13.0, tint(if on { 0.7 } else { 0.4 })).middle(),
+            );
+            let best = scores.best(&d.key(&entry.label())).map_or_else(
+                || "no score yet".to_string(),
+                |b| format!("best {:.2}%  {}", b.accuracy, game::grade_for(b.accuracy)),
+            );
+            text.draw(
+                &best,
+                vec2(mid, y + 88.0),
+                centered(12.0, tint(if on { 0.6 } else { 0.3 })).middle(),
+            );
+        }
+        text.draw(
+            "Left Right choose   Enter play   1 2 3 quick pick   Esc back",
+            vec2(w / 2.0, top + cards[0].h + 52.0),
+            centered(14.0, tint(0.55)),
+        );
     }
 }
 
@@ -641,13 +801,15 @@ async fn main() {
     let mut was_playing = false;
     let mut shown_bypass = false;
     let mut game = match std::env::args_os().nth(1) {
-        Some(path) => match Entry::File(PathBuf::from(path)).load(&settings, &scores) {
-            Ok(g) => Some(g),
-            Err(e) => {
-                select.error = Some(e);
-                None
+        Some(path) => {
+            match Entry::File(PathBuf::from(path)).load(Difficulty::Hard, &settings, &scores) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    select.error = Some(e);
+                    None
+                }
             }
-        },
+        }
         None => None,
     };
     let first_frame_ms = process_age_ms();
@@ -843,6 +1005,7 @@ async fn main() {
                     game = None;
                     select = Select {
                         error: None,
+                        difficulty: select.difficulty,
                         ..Select::new()
                     };
                     next_frame().await;
@@ -881,10 +1044,10 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                Some(Pick::Play(entry)) => {
+                Some(Pick::Play(entry, difficulty)) => {
                     select.draw(&skin, &mut fx, &settings, &scores, Some("loading..."));
                     next_frame().await;
-                    match entry.load(&settings, &scores) {
+                    match entry.load(difficulty, &settings, &scores) {
                         Ok(g) => game = Some(g),
                         Err(e) => select.error = Some(e),
                     }

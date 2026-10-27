@@ -15,6 +15,65 @@ pub const AUDIO_EXTS: &[&str] = &[
 ];
 pub const AUTO_MAPPER: &str = "auto-generated";
 
+/// Picked after a song. Easier levels drop notes that follow the last kept one too closely, so streams thin out into steady beats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Difficulty {
+    Easy,
+    Medium,
+    Hard,
+}
+
+impl Difficulty {
+    pub const ALL: [Self; 3] = [Self::Easy, Self::Medium, Self::Hard];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Easy => "Easy",
+            Self::Medium => "Medium",
+            Self::Hard => "Hard",
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Self::Easy => "main beats only",
+            Self::Medium => "most of the notes",
+            Self::Hard => "every note",
+        }
+    }
+
+    fn min_gap(self) -> f64 {
+        match self {
+            Self::Easy => 0.4,
+            Self::Medium => 0.25,
+            Self::Hard => 0.0,
+        }
+    }
+
+    /// Scores on Hard keep the plain song key, so bests from before difficulties existed still count.
+    pub fn key(self, label: &str) -> String {
+        match self {
+            Self::Hard => label.to_string(),
+            _ => format!("{label} ({})", self.name()),
+        }
+    }
+
+    pub fn apply(self, notes: &mut Vec<Note>) {
+        let gap = self.min_gap();
+        if gap <= 0.0 {
+            return;
+        }
+        let mut last = f64::NEG_INFINITY;
+        notes.retain(|n| {
+            let keep = n.time - last >= gap - 1e-9;
+            if keep {
+                last = n.time;
+            }
+            keep
+        });
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Note {
     pub time: f64,
@@ -691,5 +750,55 @@ mod osu_tests {
         let map = osz(&bytes).unwrap();
         assert_eq!(map.notes.len(), 3);
         assert_eq!(map.audio.as_deref(), Some(b"audio".as_slice()));
+    }
+}
+
+#[cfg(test)]
+mod difficulty_tests {
+    use super::*;
+
+    fn notes_every(step: f64, count: usize) -> Vec<Note> {
+        (0..count)
+            .map(|i| Note {
+                time: i as f64 * step,
+                x: 0.0,
+                y: 0.0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hard_keeps_every_note() {
+        let mut notes = notes_every(0.1, 50);
+        Difficulty::Hard.apply(&mut notes);
+        assert_eq!(notes.len(), 50);
+    }
+
+    #[test]
+    fn easier_levels_keep_fewer_notes_and_respect_their_gap() {
+        let all = notes_every(0.1, 100);
+        let mut counts = Vec::new();
+        for d in Difficulty::ALL {
+            let mut notes = all.clone();
+            d.apply(&mut notes);
+            for pair in notes.windows(2) {
+                assert!(pair[1].time - pair[0].time >= d.min_gap() - 1e-6);
+            }
+            counts.push(notes.len());
+        }
+        assert!(counts[0] < counts[1] && counts[1] < counts[2], "{counts:?}");
+    }
+
+    #[test]
+    fn sparse_maps_are_left_alone() {
+        let mut notes = notes_every(0.5, 20);
+        Difficulty::Easy.apply(&mut notes);
+        assert_eq!(notes.len(), 20);
+    }
+
+    #[test]
+    fn hard_scores_keep_the_old_key() {
+        assert_eq!(Difficulty::Hard.key("song.mp3"), "song.mp3");
+        assert_eq!(Difficulty::Easy.key("song.mp3"), "song.mp3 (Easy)");
     }
 }
