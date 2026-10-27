@@ -1,0 +1,99 @@
+name: release
+
+# Push a tag like v0.1.0 and this builds the game for Linux and Windows and
+# puts the downloads on the GitHub release for that tag. The tag must match
+# the version in Cargo.toml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu LTS so the binary runs on
+          # any distribution with glibc 2.35 or newer.
+          - os: ubuntu-24.04
+            container: ubuntu:22.04
+            asset: rhythia-is-trash-linux-x86_64.tar.gz
+          - os: windows-latest
+            asset: rhythia-is-trash-windows-x86_64.zip
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: System libraries
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev libdbus-1-dev
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Check the tag against Cargo.toml
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "Tag $TAG but Cargo.toml says $version"
+            exit 1
+          fi
+      - run: cargo build --release
+      - name: Pack (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/rhythia-is-trash/maps
+          cp target/release/rhythm README.md LICENSE dist/rhythia-is-trash/
+          cp assets/fonts/NOTICE.txt dist/rhythia-is-trash/FONTS-NOTICE.txt
+          tar czf ${{ matrix.asset }} -C dist rhythia-is-trash
+      - name: Pack (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist/rhythia-is-trash/maps -Force | Out-Null
+          Copy-Item target/release/rhythm.exe, README.md, LICENSE dist/rhythia-is-trash/
+          Copy-Item assets/fonts/NOTICE.txt dist/rhythia-is-trash/FONTS-NOTICE.txt
+          Compress-Archive -Path dist/rhythia-is-trash -DestinationPath ${{ matrix.asset }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.asset }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+      - name: Checksums
+        run: sha256sum rhythia-is-trash-* | tee SHA256SUMS
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" rhythia-is-trash-* SHA256SUMS --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" rhythia-is-trash-* SHA256SUMS --repo "$REPO" --title "rhythia is trash $TAG" --generate-notes
+          fi

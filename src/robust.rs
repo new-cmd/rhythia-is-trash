@@ -615,7 +615,7 @@ fn test_import_same_file_twice_and_remove_restore() {
 
     // Import first time
     let report1 = catch_unwind(AssertUnwindSafe(|| {
-        import::import(&maps_dir, &[map_file.clone()])
+        import::import(&maps_dir, std::slice::from_ref(&map_file))
     }))
     .expect("import panicked on first run");
     assert_eq!(report1.added.len(), 1);
@@ -629,7 +629,7 @@ fn test_import_same_file_twice_and_remove_restore() {
 
     // Import second time
     let report2 = catch_unwind(AssertUnwindSafe(|| {
-        import::import(&maps_dir, &[map_file.clone()])
+        import::import(&maps_dir, std::slice::from_ref(&map_file))
     }))
     .expect("import panicked on second run");
     assert_eq!(report2.added.len(), 1);
@@ -709,7 +709,7 @@ fn test_import_unicode_spaces_and_leading_dot() {
     fs::write(&file, "1.0, 0.5|0.5|1000, 0.5|0.5|2000").unwrap();
 
     let report = catch_unwind(AssertUnwindSafe(|| {
-        import::import(&maps_dir, &[file.clone()])
+        import::import(&maps_dir, std::slice::from_ref(&file))
     }))
     .expect("import panicked on special file name");
 
