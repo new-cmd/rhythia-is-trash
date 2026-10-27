@@ -44,9 +44,11 @@ Download the newest version from [Releases](https://github.com/sjdsjadjajdjsa/rh
 | | Download | Run |
 | --- | --- | --- |
 | **Linux** | `rhythia-is-trash-linux-x86_64.tar.gz` | Unpack it and run `./rhythm` from inside the folder. Needs glibc 2.35 or newer (Ubuntu 22.04, Fedora 36, Arch and so on). |
-| **Windows** | `rhythia-is-trash-windows-x86_64.zip` | Unzip it anywhere and run `rhythm.exe`. |
+| **Windows** | `rhythia-is-trash-setup-x86_64.exe` | Run it. Installs for your user only, with no admin rights, and adds a Start menu entry. |
 
 Windows will say the publisher is unknown, as the program isn't signed: click "More info", then "Run anyway".
+
+Rather not install? `rhythia-is-trash-x86_64.exe` is the game on its own: put it in its own folder and run it, since it keeps its maps and settings next to itself. `rhythia-is-trash-windows-x86_64.zip` is the same in a ready-made folder.
 
 Your maps, settings and scores are kept next to the program. On Windows, if that folder can't be written to (for example under Program Files), they go to `%APPDATA%\rhythia-is-trash` instead.
 

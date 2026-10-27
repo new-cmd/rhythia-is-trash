@@ -20,9 +20,12 @@ jobs:
           # any distribution with glibc 2.35 or newer.
           - os: ubuntu-24.04
             container: ubuntu:22.04
-            asset: rhythia-is-trash-linux-x86_64.tar.gz
+            assets: rhythia-is-trash-linux-x86_64.tar.gz
           - os: windows-latest
-            asset: rhythia-is-trash-windows-x86_64.zip
+            assets: |
+              rhythia-is-trash-setup-x86_64.exe
+              rhythia-is-trash-x86_64.exe
+              rhythia-is-trash-windows-x86_64.zip
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     env:
@@ -55,7 +58,7 @@ jobs:
           mkdir -p dist/rhythia-is-trash/maps
           cp target/release/rhythm README.md LICENSE dist/rhythia-is-trash/
           cp assets/fonts/NOTICE.txt dist/rhythia-is-trash/FONTS-NOTICE.txt
-          tar czf ${{ matrix.asset }} -C dist rhythia-is-trash
+          tar czf rhythia-is-trash-linux-x86_64.tar.gz -C dist rhythia-is-trash
       - name: Pack (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -63,11 +66,15 @@ jobs:
           New-Item -ItemType Directory dist/rhythia-is-trash/maps -Force | Out-Null
           Copy-Item target/release/rhythm.exe, README.md, LICENSE dist/rhythia-is-trash/
           Copy-Item assets/fonts/NOTICE.txt dist/rhythia-is-trash/FONTS-NOTICE.txt
-          Compress-Archive -Path dist/rhythia-is-trash -DestinationPath ${{ matrix.asset }}
+          Compress-Archive -Path dist/rhythia-is-trash -DestinationPath rhythia-is-trash-windows-x86_64.zip
+          Copy-Item target/release/rhythm.exe rhythia-is-trash-x86_64.exe
+          $version = $env:TAG.TrimStart("v")
+          iscc /Q "/DVersion=$version" "/DSource=$env:GITHUB_WORKSPACE\dist\rhythia-is-trash" packaging\windows\rhythia-is-trash.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.os }}
-          path: ${{ matrix.asset }}
+          path: ${{ matrix.assets }}
 
   publish:
     needs: build

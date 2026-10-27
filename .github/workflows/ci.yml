@@ -30,3 +30,13 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Installer script
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist/rhythia-is-trash -Force | Out-Null
+          Copy-Item README.md, LICENSE dist/rhythia-is-trash/
+          Copy-Item assets/fonts/NOTICE.txt dist/rhythia-is-trash/FONTS-NOTICE.txt
+          New-Item -ItemType File dist/rhythia-is-trash/rhythm.exe | Out-Null
+          iscc /Q "/DSource=$env:GITHUB_WORKSPACE\dist\rhythia-is-trash" packaging\windows\rhythia-is-trash.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
